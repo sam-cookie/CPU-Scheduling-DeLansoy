@@ -1,0 +1,10 @@
+# Workload 2 – Edge cases
+# Simultaneous arrivals, identical burst times, single process
+
+# Simultaneous arrivals (tie-break by PID)
+P1 0 50
+P2 0 50
+P3 0 50
+
+# Late arrival
+P4 200 20

@@ -1,0 +1,8 @@
+# Workload 1 – Lecture Quiz 3 workload
+# Expected FCFS avg TT ≈ 515,  SJF avg TT ≈ 461
+# Format: PID ArrivalTime BurstTime
+A 0  240
+B 10 180
+C 20 150
+D 25  80
+E 30 130

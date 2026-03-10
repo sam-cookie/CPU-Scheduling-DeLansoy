@@ -47,7 +47,11 @@ typedef struct {
     int boost_period;   /* How often to boost all processes → Q0 */
 } MLFQConfig;
 
-//algo entry points (return 0 on success, -1 on error)
+/* MLFQ config helpers (implemented in mlfq.c) */
+MLFQConfig *load_mlfq_config(const char *path);
+MLFQConfig *default_mlfq_config(void);
+void        free_mlfq_config(MLFQConfig *cfg);
+
 int schedule_fcfs(SchedulerState *state);
 int schedule_sjf(SchedulerState *state);
 int schedule_stcf(SchedulerState *state);
