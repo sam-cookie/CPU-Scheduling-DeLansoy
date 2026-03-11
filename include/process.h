@@ -14,7 +14,8 @@ typedef struct {
 
     int start_time;        
     int finish_time;        
-    int waiting_time;      
+    int waiting_time;   
+    int turnaround_time;   
 
     //mlfq 
     int priority;           // current queue level (0 = highest)          

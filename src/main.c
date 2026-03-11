@@ -7,6 +7,9 @@
 #include "metrics.h"
 #include "gantt.h"
 
+//easier running
+// $ ./schedsim --algorithm=FCFS --input=workload.txt
+
 //forward declarations (put parser functions here since there is no separate parser file)
 static void usage(const char *prog);
 static Process *parse_input_file(const char *path, int *n);

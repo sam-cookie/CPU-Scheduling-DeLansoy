@@ -5,12 +5,66 @@
 #include "metrics.h"
 
 // for rr and mlfq fr fr 
-ReadyQueue *create_ready_queue(int capacity) { (void)capacity; return NULL; }
-void        free_ready_queue(ReadyQueue *q)  { (void)q; }
-void        enqueue(ReadyQueue *q, Process *p) { (void)q; (void)p; }
-Process    *dequeue(ReadyQueue *q)           { (void)q; return NULL; }
-Process    *peek(ReadyQueue *q)              { (void)q; return NULL; }
-int         queue_is_empty(ReadyQueue *q)    { (void)q; return 1; }
+ReadyQueue *create_ready_queue(int capacity) {
+    ReadyQueue *q = calloc(1, sizeof(ReadyQueue));
+    if (!q) return NULL;
+    q->queue    = calloc(capacity, sizeof(Process *));
+    if (!q->queue) { free(q); return NULL; }
+    q->capacity = capacity;
+    q->size     = 0;
+    q->head     = 0;
+    q->tail     = 0;
+    return q;
+}
+
+void free_ready_queue(ReadyQueue *q) {
+    if (!q) return;
+    free(q->queue);
+    free(q);
+}
+
+Process *dequeue(ReadyQueue *q) {
+    if (!q || q->size == 0) return NULL;
+    Process *p = q->queue[q->head];
+    q->head = (q->head + 1) % q->capacity;
+    q->size--;
+    return p;
+}
+
+Process *peek(ReadyQueue *q) {
+    if (!q || q->size == 0) return NULL;
+    return q->queue[q->head];
+}
+
+int queue_is_empty(ReadyQueue *q) {
+    if (!q) return 1;
+    return q->size == 0;
+}
+
+void enqueue(ReadyQueue *q, Process *p) {
+    if (q->size >= q->capacity) {
+        /* Grow the buffer by doubling */
+        int new_cap = q->capacity * 2;
+        Process **new_queue = realloc(q->queue, new_cap * sizeof(Process *));
+        if (!new_queue) {
+            fprintf(stderr, "Error: queue realloc failed\n");
+            return;
+        }
+        /* If tail has wrapped around, we need to linearize the buffer */
+        if (q->tail <= q->head) {
+            int old_cap = q->capacity;
+            for (int i = 0; i < q->tail; i++) {
+                new_queue[old_cap + i] = new_queue[i];
+            }
+            q->tail = old_cap + q->tail;
+        }
+        q->queue    = new_queue;
+        q->capacity = new_cap;
+    }
+    q->queue[q->tail] = p;
+    q->tail = (q->tail + 1) % q->capacity;
+    q->size++;
+}
 
 
 // schedule_compare — runs FCFS and SJF, prints a side-by-side table.
