@@ -26,7 +26,7 @@ int schedule_rr(SchedulerState *state, int quantum) {
     int n          = state->num_processes;
     Process *procs = state->processes;
 
-    /* ── Sort processes by arrival time ────────────────────────── */
+    // sort processes by arrival time 
     for (int i = 1; i < n; i++) {
         Process tmp = procs[i];
         int j = i - 1;
@@ -37,13 +37,13 @@ int schedule_rr(SchedulerState *state, int quantum) {
         procs[j + 1] = tmp;
     }
 
-    /* ── Ready queue ────────────────────────────────────────────── */
+    // ready queue 
     ReadyQueue *rq     = create_ready_queue(n * 2);
     int completed      = 0;
     int t              = 0;
     int next_to_arrive = 0;
 
-    /* Enqueue all processes whose arrival_time <= `time` */
+    // enqueue all processes whose arrival_time <= `time`
     #define ENQUEUE_ARRIVALS(time) \
         while (next_to_arrive < n && \
                procs[next_to_arrive].arrival_time <= (time)) { \
@@ -51,12 +51,12 @@ int schedule_rr(SchedulerState *state, int quantum) {
             next_to_arrive++; \
         }
 
-    /* ── Main simulation loop ───────────────────────────────────── */
+    // ── Main simulation loop ───────────────────────────────────── 
     while (completed < n) {
 
         ENQUEUE_ARRIVALS(t);
 
-        /* CPU idle — jump to next arrival */
+        // CPU idle — jump to next arrival 
         if (queue_is_empty(rq)) {
             if (next_to_arrive < n) {
                 t = procs[next_to_arrive].arrival_time;
@@ -66,16 +66,13 @@ int schedule_rr(SchedulerState *state, int quantum) {
             }
         }
 
-        /* Pick next process from front of queue */
         Process *current = dequeue(rq);
 
-        /* Record first execution time (for response time) */
         if (!current->started) {
             current->start_time = t;
             current->started    = 1;
         }
 
-        /* Run for min(quantum, remaining_time) */
         int slice       = (current->remaining_time < quantum)
                           ? current->remaining_time : quantum;
         int slice_start = t;
@@ -83,26 +80,22 @@ int schedule_rr(SchedulerState *state, int quantum) {
         t += slice;
         current->remaining_time -= slice;
 
-        /* Log this slice in the Gantt chart */
         gantt_record(state, current->pid, slice_start, t);
 
-        /* ── Post-slice bookkeeping ─────────────────────────── */
         if (current->remaining_time == 0) {
             current->finish_time = t;
             current->completed   = 1;
             completed++;
         } else {
-            /* Enqueue arrivals from during this slice,
-             * then put current process at the back       */
-            ENQUEUE_ARRIVALS(t);
-            enqueue(rq, current);
+            enqueue(rq, current);  // ← preempted process goes back FIRST
+            ENQUEUE_ARRIVALS(t); 
             state->context_switches++;
         }
     }
 
     #undef ENQUEUE_ARRIVALS
 
-    /* ── Metrics & output ───────────────────────────────────────── */
+    // metrics & output (move outside)
     Metrics m;
     calculate_metrics(procs, n, &m);
     m.context_switches = state->context_switches;

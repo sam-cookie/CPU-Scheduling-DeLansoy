@@ -39,7 +39,7 @@ int schedule_stcf(SchedulerState *state) {
 
     while (completed < n) {
 
-        /* ── Pick process with shortest remaining_time ──────────── */
+        // pick process with shortest remaining_time 
         Process *chosen = NULL;
         for (int i = 0; i < n; i++) {
             if (procs[i].completed)            continue;
@@ -51,13 +51,13 @@ int schedule_stcf(SchedulerState *state) {
             }
         }
 
-        /* ── CPU idle — no process ready yet ───────────────────── */
+        // CPU idle — no process ready yet 
         if (chosen == NULL) {
             clock++;
             continue;
         }
 
-        /* ── Context switch detection ───────────────────────────── */
+        // context switch detection 
         if (strcmp(current_pid, chosen->pid) != 0) {
             /* flush the previous process's slice to the Gantt chart */
             if (strlen(current_pid) > 0) {
@@ -73,11 +73,11 @@ int schedule_stcf(SchedulerState *state) {
             last_start = clock;
         }
 
-        /* ── Run for 1 tick ─────────────────────────────────────── */
+        // run for 1 tick 
         chosen->remaining_time--;
         clock++;
 
-        /* ── Process finished ───────────────────────────────────── */
+        // process finished 
         if (chosen->remaining_time == 0) {
             chosen->finish_time = clock;
             chosen->completed   = 1;
@@ -89,7 +89,7 @@ int schedule_stcf(SchedulerState *state) {
         }
     }
 
-    /* ── Metrics & output ───────────────────────────────────────── */
+    // metrics & output (move outside)
     Metrics m;
     m.context_switches = state->context_switches;
     calculate_metrics(procs, n, &m);
