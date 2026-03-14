@@ -1,10 +1,6 @@
 #include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
-
-#include "process.h"
 #include "scheduler.h"
-#include "metrics.h"
 #include "gantt.h"
 
 /*
@@ -21,12 +17,10 @@
  *   5. If the CPU is idle, advance time to the next arrival.
  */
 int schedule_rr(SchedulerState *state, int quantum) {
-    printf("Running RR Scheduler (quantum = %d)...\n\n", quantum);
-
-    int n          = state->num_processes;
+    int      n     = state->num_processes;
     Process *procs = state->processes;
 
-    // sort processes by arrival time 
+    // sort processes by arrival time
     for (int i = 1; i < n; i++) {
         Process tmp = procs[i];
         int j = i - 1;
@@ -37,7 +31,7 @@ int schedule_rr(SchedulerState *state, int quantum) {
         procs[j + 1] = tmp;
     }
 
-    // ready queue 
+    // ready queue
     ReadyQueue *rq     = create_ready_queue(n * 2);
     int completed      = 0;
     int t              = 0;
@@ -51,12 +45,12 @@ int schedule_rr(SchedulerState *state, int quantum) {
             next_to_arrive++; \
         }
 
-    // ── Main simulation loop ───────────────────────────────────── 
+    // main simulation loop
     while (completed < n) {
 
         ENQUEUE_ARRIVALS(t);
 
-        // CPU idle — jump to next arrival 
+        // CPU idle — jump to next arrival
         if (queue_is_empty(rq)) {
             if (next_to_arrive < n) {
                 t = procs[next_to_arrive].arrival_time;
@@ -87,22 +81,13 @@ int schedule_rr(SchedulerState *state, int quantum) {
             current->completed   = 1;
             completed++;
         } else {
-            enqueue(rq, current);  // ← preempted process goes back FIRST
-            ENQUEUE_ARRIVALS(t); 
+            enqueue(rq, current);
+            ENQUEUE_ARRIVALS(t);
             state->context_switches++;
         }
     }
 
     #undef ENQUEUE_ARRIVALS
-
-    // metrics & output (move outside)
-    Metrics m;
-    calculate_metrics(procs, n, &m);
-    m.context_switches = state->context_switches;
-
-    gantt_print(state);
-    print_metrics(procs, n, &m);
-    printf("\nTotal context switches: %d\n", state->context_switches);
 
     free_ready_queue(rq);
     return 0;

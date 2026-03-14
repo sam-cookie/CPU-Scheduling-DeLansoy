@@ -1,10 +1,6 @@
 #include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
-
-#include "process.h"
 #include "scheduler.h"
-#include "metrics.h"
 #include "gantt.h"
 
 /*
@@ -19,9 +15,7 @@
  *   4. If no process is ready, advance the clock (CPU idle).
  */
 int schedule_stcf(SchedulerState *state) {
-    printf("Running STCF Scheduler...\n\n");
-
-    int n          = state->num_processes;
+    int      n     = state->num_processes;
     Process *procs = state->processes;
 
     /* initialise remaining_time for every process */
@@ -32,32 +26,29 @@ int schedule_stcf(SchedulerState *state) {
         procs[i].start_time     = -1;
     }
 
-    int clock        = 0;
-    int completed    = 0;
-    int last_start   = 0;
+    int  clock      = 0;
+    int  completed  = 0;
+    int  last_start = 0;
     char current_pid[MAX_PID_LEN] = "";   /* pid of whoever is running */
 
     while (completed < n) {
 
-        // pick process with shortest remaining_time 
+        // pick process with shortest remaining_time
         Process *chosen = NULL;
         for (int i = 0; i < n; i++) {
-            if (procs[i].completed)            continue;
-            if (procs[i].arrival_time > clock)  continue;
-
+            if (procs[i].completed || procs[i].arrival_time > clock) continue;
             if (chosen == NULL ||
-                procs[i].remaining_time < chosen->remaining_time) {
+                procs[i].remaining_time < chosen->remaining_time)
                 chosen = &procs[i];
-            }
         }
 
-        // CPU idle — no process ready yet 
+        // CPU idle — no process ready yet
         if (chosen == NULL) {
             clock++;
             continue;
         }
 
-        // context switch detection 
+        // context switch detection
         if (strcmp(current_pid, chosen->pid) != 0) {
             /* flush the previous process's slice to the Gantt chart */
             if (strlen(current_pid) > 0) {
@@ -73,11 +64,11 @@ int schedule_stcf(SchedulerState *state) {
             last_start = clock;
         }
 
-        // run for 1 tick 
+        // run for 1 tick
         chosen->remaining_time--;
         clock++;
 
-        // process finished 
+        // process finished
         if (chosen->remaining_time == 0) {
             chosen->finish_time = clock;
             chosen->completed   = 1;
@@ -88,15 +79,6 @@ int schedule_stcf(SchedulerState *state) {
             current_pid[0] = '\0';
         }
     }
-
-    // metrics & output (move outside)
-    Metrics m;
-    m.context_switches = state->context_switches;
-    calculate_metrics(procs, n, &m);
-
-    gantt_print(state);
-    print_metrics(procs, n, &m);
-    printf("\nTotal context switches: %d\n", state->context_switches);
 
     return 0;
 }

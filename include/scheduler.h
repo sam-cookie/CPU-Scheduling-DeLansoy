@@ -78,5 +78,7 @@ void enqueue(ReadyQueue *q, Process *p);
 Process *dequeue(ReadyQueue *q);
 Process *peek(ReadyQueue *q);
 int queue_is_empty(ReadyQueue *q);
+void print_results(SchedulerState *state, const char *label);
+void check_convoy_effect(const Process *procs, int n);
 
 #endif /* SCHEDULER_H */

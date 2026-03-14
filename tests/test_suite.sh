@@ -172,7 +172,6 @@ $BIN --algorithm=FCFS 2>/dev/null
 $BIN --algorithm=FCFS --input=tests/doesnotexist.txt 2>/dev/null
 [ $? -ne 0 ] && pass "Missing file: exits non-zero" || fail "Missing file: should exit non-zero"
 
-
 check "Unknown algorithm: falls back to FCFS" \
     "FCFS|Gantt" \
     $BIN --algorithm=BOGUS --processes="A:0:10"

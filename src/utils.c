@@ -3,6 +3,7 @@
 #include <string.h>
 #include "scheduler.h"
 #include "metrics.h"
+#include "gantt.h"
 
 // for rr and mlfq fr fr 
 ReadyQueue *create_ready_queue(int capacity) {
@@ -138,4 +139,20 @@ void check_convoy_effect(const Process *procs, int n) {
             printf("Convoy effect detected: Process %s waited %d time units\n",
                    procs[i].pid, procs[i].waiting_time);
     }
+}
+
+// print results at every algorithm's end, including Gantt chart and metrics omsim 
+void print_results(SchedulerState *state, const char *label) {
+    gantt_print(state);
+
+    Metrics m;
+    calculate_metrics(state->processes, state->num_processes, &m);
+    m.context_switches = state->context_switches;
+    print_metrics(state->processes, state->num_processes, &m);
+
+    if (state->context_switches > 0)
+        printf("\nTotal context switches: %d\n", state->context_switches);
+
+    if (strcmp(label, "FCFS") == 0)
+        check_convoy_effect(state->processes, state->num_processes);
 }

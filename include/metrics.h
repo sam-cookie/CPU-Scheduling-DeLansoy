@@ -10,7 +10,6 @@ typedef struct {
     int    context_switches;
 } Metrics;
 
-
 //  turnaround = finish_time  - arrival_time
 //  waiting    = turnaround   - burst_time
 //  response   = start_time   - arrival_time
