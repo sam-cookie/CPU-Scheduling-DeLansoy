@@ -47,7 +47,40 @@ typedef struct {
     int boost_period;   /* How often to boost all processes → Q0 */
 } MLFQConfig;
 
-/* MLFQ config helpers (implemented in mlfq.c) */
+/* ── add these to scheduler.h ── */
+
+/* index queue — used internally by mlfq */
+typedef struct {
+    int *indices;
+    int  size;
+    int  capacity;
+} IdxQueue;
+
+/* mlfq runtime state */
+typedef struct {
+    IdxQueue **queues;
+    int        num_queues;
+    int        boost_period;
+    int        last_boost;
+    int       *time_in_queue;
+} MLFQ;
+
+/* index queue helpers */
+IdxQueue *iq_create(int capacity);
+void      iq_free(IdxQueue *q);
+void      iq_enqueue(IdxQueue *q, int idx);
+int       iq_dequeue(IdxQueue *q);
+int       iq_is_empty(IdxQueue *q);
+
+/* mlfq utils */
+MLFQ *mlfq_create(MLFQConfig *config, int n);
+void  mlfq_destroy(MLFQ *mlfq, int num_levels);
+void  mlfq_enqueue_process(MLFQ *mlfq, Process *procs, int idx, int level, int t);
+int   mlfq_highest_nonempty(MLFQ *mlfq);
+void  mlfq_boost(MLFQ *mlfq, Process *procs, int current_time);
+void  mlfq_requeue_or_demote(MLFQ *mlfq, int idx, Process *procs, MLFQConfig *config);
+void  mlfq_print_config(MLFQConfig *config);
+void  mlfq_print_analysis(Process *procs, int n, MLFQConfig *config);
 MLFQConfig *load_mlfq_config(const char *path);
 MLFQConfig *default_mlfq_config(void);
 void        free_mlfq_config(MLFQConfig *cfg);

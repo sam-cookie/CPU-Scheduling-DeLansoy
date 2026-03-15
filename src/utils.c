@@ -5,16 +5,29 @@
 #include "metrics.h"
 #include "gantt.h"
 
-// for rr and mlfq fr fr 
+/* ═══════════════════════════════════════════════════════════════════
+ * utils.c — shared helpers used across all schedulers
+ *
+ * sections:
+ *   1. ready queue       (used by fcfs, sjf, stcf, rr)
+ *   2. index queue       (used by mlfq — stores int indices)
+ *   3. mlfq runtime      (queue management, boost, demotion)
+ *   4. mlfq config       (load from file, defaults, free)
+ *   5. output helpers    (print_results, analysis, convoy check)
+ *   6. compare runner    (runs all algorithms side by side)
+ * ═══════════════════════════════════════════════════════════════════ */
+
+/* ── 1. ready queue ─────────────────────────────────────────────────
+ * circular buffer of Process* pointers, used by fcfs/sjf/stcf/rr.
+ * grows automatically if it fills up so we never silently drop a process.
+ * ─────────────────────────────────────────────────────────────────── */
+
 ReadyQueue *create_ready_queue(int capacity) {
     ReadyQueue *q = calloc(1, sizeof(ReadyQueue));
     if (!q) return NULL;
     q->queue    = calloc(capacity, sizeof(Process *));
     if (!q->queue) { free(q); return NULL; }
     q->capacity = capacity;
-    q->size     = 0;
-    q->head     = 0;
-    q->tail     = 0;
     return q;
 }
 
@@ -24,39 +37,17 @@ void free_ready_queue(ReadyQueue *q) {
     free(q);
 }
 
-Process *dequeue(ReadyQueue *q) {
-    if (!q || q->size == 0) return NULL;
-    Process *p = q->queue[q->head];
-    q->head = (q->head + 1) % q->capacity;
-    q->size--;
-    return p;
-}
-
-Process *peek(ReadyQueue *q) {
-    if (!q || q->size == 0) return NULL;
-    return q->queue[q->head];
-}
-
-int queue_is_empty(ReadyQueue *q) {
-    if (!q) return 1;
-    return q->size == 0;
-}
-
 void enqueue(ReadyQueue *q, Process *p) {
     if (q->size >= q->capacity) {
-        /* Grow the buffer by doubling */
-        int new_cap = q->capacity * 2;
-        Process **new_queue = realloc(q->queue, new_cap * sizeof(Process *));
-        if (!new_queue) {
-            fprintf(stderr, "Error: queue realloc failed\n");
-            return;
-        }
-        /* If tail has wrapped around, we need to linearize the buffer */
+        /* double capacity and fix up the circular buffer if it wrapped */
+        int new_cap          = q->capacity * 2;
+        Process **new_queue  = realloc(q->queue, new_cap * sizeof(Process *));
+        if (!new_queue) { fprintf(stderr, "enqueue: realloc failed\n"); return; }
         if (q->tail <= q->head) {
+            /* tail wrapped around — copy the wrapped part to the new space */
             int old_cap = q->capacity;
-            for (int i = 0; i < q->tail; i++) {
+            for (int i = 0; i < q->tail; i++)
                 new_queue[old_cap + i] = new_queue[i];
-            }
             q->tail = old_cap + q->tail;
         }
         q->queue    = new_queue;
@@ -67,8 +58,265 @@ void enqueue(ReadyQueue *q, Process *p) {
     q->size++;
 }
 
+Process *dequeue(ReadyQueue *q) {
+    if (!q || q->size == 0) return NULL;
+    Process *p = q->queue[q->head];
+    q->head    = (q->head + 1) % q->capacity;
+    q->size--;
+    return p;
+}
 
-// schedule_compare — runs FCFS and SJF, prints a side-by-side table.
+Process *peek(ReadyQueue *q) {
+    if (!q || q->size == 0) return NULL;
+    return q->queue[q->head];
+}
+
+int queue_is_empty(ReadyQueue *q) {
+    return !q || q->size == 0;
+}
+
+/* ── 2. index queue ─────────────────────────────────────────────────
+ * stores int indices into procs[] instead of process copies.
+ * avoids stale-copy bugs since we always work on the real process.
+ * same idea as ReadyQueue but lighter — just ints, no circular buffer.
+ * ─────────────────────────────────────────────────────────────────── */
+
+IdxQueue *iq_create(int capacity) {
+    IdxQueue *q = calloc(1, sizeof(IdxQueue));
+    q->indices  = calloc(capacity, sizeof(int));
+    q->capacity = capacity;
+    return q;
+}
+
+void iq_free(IdxQueue *q) {
+    if (!q) return;
+    free(q->indices);
+    free(q);
+}
+
+void iq_enqueue(IdxQueue *q, int idx) {
+    /* grow if full */
+    if (q->size >= q->capacity) {
+        q->capacity *= 2;
+        q->indices   = realloc(q->indices, q->capacity * sizeof(int));
+    }
+    q->indices[q->size++] = idx;
+}
+
+int iq_dequeue(IdxQueue *q) {
+    if (q->size == 0) return -1;
+    int idx = q->indices[0];
+    /* shift left — fine for small n */
+    for (int i = 1; i < q->size; i++)
+        q->indices[i-1] = q->indices[i];
+    q->size--;
+    return idx;
+}
+
+int iq_is_empty(IdxQueue *q) {
+    return !q || q->size == 0;
+}
+
+/* ── 3. mlfq runtime ────────────────────────────────────────────────
+ * everything the scheduler needs at runtime:
+ *   - one IdxQueue per priority level
+ *   - per-process allotment counter (time_in_queue)
+ *   - boost tracking
+ * ─────────────────────────────────────────────────────────────────── */
+
+MLFQ *mlfq_create(MLFQConfig *config, int n) {
+    MLFQ *mlfq          = calloc(1, sizeof(MLFQ));
+    mlfq->num_queues    = config->num_levels;
+    mlfq->boost_period  = config->boost_period;
+    mlfq->last_boost    = 0;
+    mlfq->queues        = calloc(config->num_levels, sizeof(IdxQueue *));
+    mlfq->time_in_queue = calloc(n, sizeof(int));
+    for (int i = 0; i < config->num_levels; i++)
+        mlfq->queues[i] = iq_create(n + 1);
+    return mlfq;
+}
+
+void mlfq_destroy(MLFQ *mlfq, int num_levels) {
+    for (int i = 0; i < num_levels; i++)
+        iq_free(mlfq->queues[i]);
+    free(mlfq->queues);
+    free(mlfq->time_in_queue);
+    free(mlfq);
+}
+
+/* add a process to a specific queue level and announce it */
+void mlfq_enqueue_process(MLFQ *mlfq, Process *procs,
+                           int idx, int level, int t) {
+    printf("  [t=%d] Process %s enters Q%d\n", t, procs[idx].pid, level);
+    procs[idx].priority      = level;
+    mlfq->time_in_queue[idx] = 0;
+    iq_enqueue(mlfq->queues[level], idx);
+}
+
+/* return index of highest-priority queue that isn't empty, -1 if all empty */
+int mlfq_highest_nonempty(MLFQ *mlfq) {
+    for (int i = 0; i < mlfq->num_queues; i++)
+        if (!iq_is_empty(mlfq->queues[i]))
+            return i;
+    return -1;
+}
+
+/* drag all processes back to Q0 every boost_period ticks.
+ * prevents long jobs from starving at the bottom forever. */
+void mlfq_boost(MLFQ *mlfq, Process *procs, int current_time) {
+    if (current_time - mlfq->last_boost < mlfq->boost_period) return;
+    printf("  [t=%d] Priority boost: all processes → Q0\n", current_time);
+    for (int i = 1; i < mlfq->num_queues; i++) {
+        while (!iq_is_empty(mlfq->queues[i])) {
+            int idx              = iq_dequeue(mlfq->queues[i]);
+            procs[idx].priority  = 0;
+            mlfq->time_in_queue[idx] = 0;
+            iq_enqueue(mlfq->queues[0], idx);
+        }
+    }
+    mlfq->last_boost = current_time;
+}
+
+/* after a slice: demote if allotment is used up, otherwise re-enqueue.
+ * note: time_in_queue keeps ticking even if the process yields early —
+ * this is the anti-gaming rule (can't stay at Q0 by giving up the cpu). */
+void mlfq_requeue_or_demote(MLFQ *mlfq, int idx,
+                              Process *procs, MLFQConfig *config) {
+    int lvl       = procs[idx].priority;
+    int allotment = config->levels[lvl].allotment;
+    int last_q    = mlfq->num_queues - 1;
+
+    /* allotment=-1 means infinite (lowest queue), never demote */
+    if (allotment != -1 && mlfq->time_in_queue[idx] >= allotment
+        && lvl < last_q) {
+        printf("  [MLFQ] Process %s demoted Q%d → Q%d "
+               "(used %d/%d allotment)\n",
+               procs[idx].pid, lvl, lvl + 1,
+               mlfq->time_in_queue[idx], allotment);
+        procs[idx].priority++;
+        mlfq->time_in_queue[idx] = 0;
+    }
+    iq_enqueue(mlfq->queues[procs[idx].priority], idx);
+}
+
+/* ── 4. mlfq config ─────────────────────────────────────────────────
+ * load from file, return defaults, free when done
+ * ─────────────────────────────────────────────────────────────────── */
+
+MLFQConfig *load_mlfq_config(const char *path) {
+    FILE *f = fopen(path, "r");
+    if (!f) { perror(path); return NULL; }
+
+    MLFQConfig *cfg   = calloc(1, sizeof(MLFQConfig));
+    cfg->levels       = calloc(16, sizeof(MLFQLevel));
+    cfg->boost_period = 200;
+
+    char line[256];
+    while (fgets(line, sizeof(line), f)) {
+        if (line[0] == '#' || line[0] == '\n') continue;
+        int qid, quantum, allotment;
+        if (sscanf(line, "Q%d %d %d", &qid, &quantum, &allotment) == 3) {
+            if (qid < 16) {
+                cfg->levels[qid].level        = qid;
+                cfg->levels[qid].time_quantum  = quantum;
+                cfg->levels[qid].allotment     = allotment;
+                if (qid + 1 > cfg->num_levels)
+                    cfg->num_levels = qid + 1;
+            }
+        } else {
+            int period;
+            if (sscanf(line, "BOOST_PERIOD %d", &period) == 1)
+                cfg->boost_period = period;
+        }
+    }
+    fclose(f);
+    return cfg;
+}
+
+MLFQConfig *default_mlfq_config(void) {
+    MLFQConfig *cfg   = calloc(1, sizeof(MLFQConfig));
+    cfg->num_levels   = 3;
+    cfg->boost_period = 200;
+    cfg->levels       = calloc(3, sizeof(MLFQLevel));
+    /* q0: short jobs, q1: medium, q2: long batch (fcfs) */
+    cfg->levels[0] = (MLFQLevel){ .level=0, .time_quantum=10, .allotment=50  };
+    cfg->levels[1] = (MLFQLevel){ .level=1, .time_quantum=30, .allotment=150 };
+    cfg->levels[2] = (MLFQLevel){ .level=2, .time_quantum=-1, .allotment=-1  };
+    return cfg;
+}
+
+void free_mlfq_config(MLFQConfig *cfg) {
+    if (!cfg) return;
+    free(cfg->levels);
+    free(cfg);
+}
+
+/* print the config so the user knows what they're running */
+void mlfq_print_config(MLFQConfig *config) {
+    printf("=== MLFQ Configuration ===\n");
+    for (int i = 0; i < config->num_levels; i++) {
+        MLFQLevel *lvl = &config->levels[i];
+        if (lvl->time_quantum == -1)
+            printf("  Queue %d: FCFS, allotment=inf%s\n", i,
+                   i == config->num_levels - 1 ? " (lowest priority)" : "");
+        else
+            printf("  Queue %d: quantum=%d, allotment=%d%s\n",
+                   i, lvl->time_quantum, lvl->allotment,
+                   i == 0 ? " (highest priority)" : "");
+    }
+    printf("  Boost period: %d\n\n", config->boost_period);
+}
+
+/* short vs long analysis — fused with convoy check since both are
+ * post-simulation observations about how processes behaved */
+void mlfq_print_analysis(Process *procs, int n, MLFQConfig *config) {
+    printf("=== Analysis ===\n");
+    for (int i = 0; i < n; i++) {
+        if (procs[i].total_cpu_time <= config->levels[0].allotment)
+            printf("  %s: short job — completed within Q0 allotment\n",
+                   procs[i].pid);
+        else
+            printf("  %s: long job  — used %d total cpu ticks\n",
+                   procs[i].pid, procs[i].total_cpu_time);
+    }
+}
+
+/* ── 5. output helpers ──────────────────────────────────────────────
+ * shared by all algorithms — gantt + metrics + optional extras
+ * ─────────────────────────────────────────────────────────────────── */
+
+/* convoy effect check — only relevant for fcfs where a long job
+ * can block everyone behind it for a long time */
+void check_convoy_effect(const Process *procs, int n) {
+    for (int i = 0; i < n; i++)
+        if (procs[i].waiting_time > procs[i].burst_time)
+            printf("Convoy effect detected: Process %s waited %d time units\n",
+                   procs[i].pid, procs[i].waiting_time);
+}
+
+/* print gantt + metrics for any algorithm.
+ * fcfs also gets the convoy check since it's the one prone to it. */
+void print_results(SchedulerState *state, const char *label) {
+    gantt_print(state);
+
+    Metrics m;
+    calculate_metrics(state->processes, state->num_processes, &m);
+    m.context_switches = state->context_switches;
+    print_metrics(state->processes, state->num_processes, &m);
+
+    if (state->context_switches > 0)
+        printf("\nTotal context switches: %d\n", state->context_switches);
+
+    if (strcmp(label, "FCFS") == 0)
+        check_convoy_effect(state->processes, state->num_processes);
+}
+
+/* ── 6. compare runner ──────────────────────────────────────────────
+ * runs all algorithms on the same workload and prints a summary table.
+ * each algorithm gets a fresh clone of the process array so they
+ * don't interfere with each other.
+ * ─────────────────────────────────────────────────────────────────── */
+
 int schedule_compare(Process *processes, int num_processes,
                      int rr_quantum, MLFQConfig *mlfq_config) {
     (void)rr_quantum;
@@ -84,33 +332,33 @@ int schedule_compare(Process *processes, int num_processes,
     Row rows[5];
     int nrows = 0;
 
-#define RUN_ALGO(label, algo_call)                                          \
-    do {                                                                    \
-        Process *clone = malloc((size_t)num_processes * sizeof(Process));   \
-        if (!clone) break;                                                  \
-        memcpy(clone, processes, (size_t)num_processes * sizeof(Process));  \
-        SchedulerState *st = calloc(1, sizeof(SchedulerState));             \
-        if (!st) { free(clone); break; }                                    \
-        st->processes     = clone;                                          \
-        st->num_processes = num_processes;                                  \
-        int rc = algo_call;                                                 \
-        if (rc == 0) {                                                      \
-            rows[nrows].name = (label);                                     \
-            rows[nrows].cs   = st->context_switches;                        \
-            rows[nrows].ok   = 1;                                           \
-            calculate_metrics(clone, num_processes, &rows[nrows].m);        \
-            nrows++;                                                        \
-        }                                                                   \
-        free(clone);                                                        \
-        free(st);                                                           \
+/* clone the process array, run the algorithm, grab metrics, clean up */
+#define RUN_ALGO(label, algo_call)                                           \
+    do {                                                                     \
+        Process *clone = malloc((size_t)num_processes * sizeof(Process));    \
+        if (!clone) break;                                                   \
+        memcpy(clone, processes, (size_t)num_processes * sizeof(Process));   \
+        SchedulerState *st = calloc(1, sizeof(SchedulerState));              \
+        if (!st) { free(clone); break; }                                     \
+        st->processes     = clone;                                           \
+        st->num_processes = num_processes;                                   \
+        int rc = algo_call;                                                  \
+        if (rc == 0) {                                                       \
+            rows[nrows].name = (label);                                      \
+            rows[nrows].cs   = st->context_switches;                         \
+            rows[nrows].ok   = 1;                                            \
+            calculate_metrics(clone, num_processes, &rows[nrows].m);         \
+            nrows++;                                                         \
+        }                                                                    \
+        free(clone);                                                         \
+        free(st);                                                            \
     } while (0)
 
     RUN_ALGO("FCFS", schedule_fcfs(st));
     RUN_ALGO("SJF",  schedule_sjf(st));
-    // not yet implemented 
-    // RUN_ALGO("STCF", schedule_stcf(st)); 
-    // RUN_ALGO("RR",   schedule_rr(st, rr_quantum)); 
-    // RUN_ALGO("MLFQ", schedule_mlfq(st, mlfq_config)); 
+    RUN_ALGO("STCF", schedule_stcf(st));
+    RUN_ALGO("RR",   schedule_rr(st, rr_quantum));
+    RUN_ALGO("MLFQ", schedule_mlfq(st, mlfq_config));
 
 #undef RUN_ALGO
 
@@ -118,7 +366,6 @@ int schedule_compare(Process *processes, int num_processes,
     printf("%-10s | %8s | %8s | %8s | %8s\n",
            "Algorithm", "Avg TT", "Avg WT", "Avg RT", "Ctx SW");
     printf("-----------|----------|----------|----------|----------\n");
-
     for (int i = 0; i < nrows; i++) {
         if (!rows[i].ok) continue;
         printf("%-10s | %8.1f | %8.1f | %8.1f | %8d\n",
@@ -128,31 +375,5 @@ int schedule_compare(Process *processes, int num_processes,
                rows[i].m.avg_response,
                rows[i].cs);
     }
-
     return 0;
-}
-
-// check convoy effect
-void check_convoy_effect(const Process *procs, int n) {
-    for (int i = 0; i < n; i++) {
-        if (procs[i].waiting_time > procs[i].burst_time)
-            printf("Convoy effect detected: Process %s waited %d time units\n",
-                   procs[i].pid, procs[i].waiting_time);
-    }
-}
-
-// print results at every algorithm's end, including Gantt chart and metrics omsim 
-void print_results(SchedulerState *state, const char *label) {
-    gantt_print(state);
-
-    Metrics m;
-    calculate_metrics(state->processes, state->num_processes, &m);
-    m.context_switches = state->context_switches;
-    print_metrics(state->processes, state->num_processes, &m);
-
-    if (state->context_switches > 0)
-        printf("\nTotal context switches: %d\n", state->context_switches);
-
-    if (strcmp(label, "FCFS") == 0)
-        check_convoy_effect(state->processes, state->num_processes);
 }
