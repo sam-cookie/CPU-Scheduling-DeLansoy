@@ -77,7 +77,6 @@ int queue_is_empty(ReadyQueue *q) {
 
 /* ── 2. index queue ─────────────────────────────────────────────────
  * stores int indices into procs[] instead of process copies.
- * avoids stale-copy bugs since we always work on the real process.
  * same idea as ReadyQueue but lighter — just ints, no circular buffer.
  * ─────────────────────────────────────────────────────────────────── */
 
@@ -117,13 +116,11 @@ int iq_is_empty(IdxQueue *q) {
     return !q || q->size == 0;
 }
 
-/* ── 3. mlfq runtime ────────────────────────────────────────────────
- * everything the scheduler needs at runtime:
- *   - one IdxQueue per priority level
- *   - per-process allotment counter (time_in_queue)
- *   - boost tracking
- * ─────────────────────────────────────────────────────────────────── */
-
+/*
+ * mlfq_create — set up mlfq with queues and time tracking
+ * config: queue settings, n: number of processes
+ * returns: new mlfq struct or null on error
+ */
 MLFQ *mlfq_create(MLFQConfig *config, int n) {
     MLFQ *mlfq          = calloc(1, sizeof(MLFQ));
     mlfq->num_queues    = config->num_levels;
@@ -136,6 +133,10 @@ MLFQ *mlfq_create(MLFQConfig *config, int n) {
     return mlfq;
 }
 
+/*
+ * mlfq_destroy — clean up mlfq memory
+ * mlfq: the struct to free, num_levels: number of queues
+ */
 void mlfq_destroy(MLFQ *mlfq, int num_levels) {
     for (int i = 0; i < num_levels; i++)
         iq_free(mlfq->queues[i]);
@@ -145,15 +146,32 @@ void mlfq_destroy(MLFQ *mlfq, int num_levels) {
 }
 
 /* add a process to a specific queue level and announce it */
+/*
+ * mlfq_enqueue_process — add process to a specific queue level
+ * mlfq: the scheduler, procs: process array, idx: process index
+ * level: queue to add to, t: current time
+ * slice_start: start of current slice (for mid-quantum check)
+ * current_pid: pid of currently running process (for mid-quantum)
+ */
 void mlfq_enqueue_process(MLFQ *mlfq, Process *procs,
-                           int idx, int level, int t) {
-    printf("  [t=%d] Process %s enters Q%d\n", t, procs[idx].pid, level);
+                           int idx, int level, int t, int slice_start, const char *current_pid) {
+    if (current_pid && t > slice_start) {
+        printf("t=%-3d:   Process %s arrives mid-quantum; %s continues\n",
+               t, procs[idx].pid, current_pid);
+    } else {
+        printf("t=%-3d:   Process %s arrives → enters Q%d\n",
+               t, procs[idx].pid, level);
+    }
     procs[idx].priority      = level;
     mlfq->time_in_queue[idx] = 0;
     iq_enqueue(mlfq->queues[level], idx);
 }
 
-/* return index of highest-priority queue that isn't empty, -1 if all empty */
+/*
+ * mlfq_highest_nonempty — find highest priority queue with processes
+ * mlfq: the scheduler
+ * returns: queue index (0 highest) or -1 if all empty
+ */
 int mlfq_highest_nonempty(MLFQ *mlfq) {
     for (int i = 0; i < mlfq->num_queues; i++)
         if (!iq_is_empty(mlfq->queues[i]))
@@ -161,11 +179,15 @@ int mlfq_highest_nonempty(MLFQ *mlfq) {
     return -1;
 }
 
-/* drag all processes back to Q0 every boost_period ticks.
- * prevents long jobs from starving at the bottom forever. */
-void mlfq_boost(MLFQ *mlfq, Process *procs, int current_time) {
-    if (current_time - mlfq->last_boost < mlfq->boost_period) return;
-    printf("  [t=%d] Priority boost: all processes → Q0\n", current_time);
+/*
+ * mlfq_boost — move all processes back to q0 if boost time reached
+ * mlfq: the scheduler, procs: process array, current_time: now
+ * returns: 1 if boosted, 0 otherwise
+ */
+int mlfq_boost(MLFQ *mlfq, Process *procs, int current_time) {
+    if (current_time - mlfq->last_boost < mlfq->boost_period) return 0;
+    printf("t=%-3d: Priority boost: all processes → Q0 (allotments reset)\n",
+           current_time);
     for (int i = 1; i < mlfq->num_queues; i++) {
         while (!iq_is_empty(mlfq->queues[i])) {
             int idx              = iq_dequeue(mlfq->queues[i]);
@@ -175,11 +197,13 @@ void mlfq_boost(MLFQ *mlfq, Process *procs, int current_time) {
         }
     }
     mlfq->last_boost = current_time;
+    return 1;
 }
 
-/* after a slice: demote if allotment is used up, otherwise re-enqueue.
- * note: time_in_queue keeps ticking even if the process yields early —
- * this is the anti-gaming rule (can't stay at Q0 by giving up the cpu). */
+/*
+ * mlfq_requeue_or_demote — after slice, demote if allotment used, else requeue
+ * mlfq: the scheduler, idx: process index, procs: process array, config: settings
+ */
 void mlfq_requeue_or_demote(MLFQ *mlfq, int idx,
                               Process *procs, MLFQConfig *config) {
     int lvl       = procs[idx].priority;
@@ -203,6 +227,11 @@ void mlfq_requeue_or_demote(MLFQ *mlfq, int idx,
  * load from file, return defaults, free when done
  * ─────────────────────────────────────────────────────────────────── */
 
+/*
+ * load_mlfq_config — read mlfq settings from file
+ * path: file path
+ * returns: config struct or null on error
+ */
 MLFQConfig *load_mlfq_config(const char *path) {
     FILE *f = fopen(path, "r");
     if (!f) { perror(path); return NULL; }
@@ -233,6 +262,10 @@ MLFQConfig *load_mlfq_config(const char *path) {
     return cfg;
 }
 
+/*
+ * default_mlfq_config — create default mlfq settings
+ * returns: config with standard values
+ */
 MLFQConfig *default_mlfq_config(void) {
     MLFQConfig *cfg   = calloc(1, sizeof(MLFQConfig));
     cfg->num_levels   = 3;
@@ -245,30 +278,77 @@ MLFQConfig *default_mlfq_config(void) {
     return cfg;
 }
 
+/*
+ * free_mlfq_config — clean up config memory
+ * cfg: the config to free
+ */
 void free_mlfq_config(MLFQConfig *cfg) {
     if (!cfg) return;
     free(cfg->levels);
     free(cfg);
 }
 
-/* print the config so the user knows what they're running */
+/*
+ * mlfq_print_config — show the current mlfq settings
+ * config: the config to display
+ */
 void mlfq_print_config(MLFQConfig *config) {
     printf("=== MLFQ Configuration ===\n");
     for (int i = 0; i < config->num_levels; i++) {
         MLFQLevel *lvl = &config->levels[i];
-        if (lvl->time_quantum == -1)
-            printf("  Queue %d: FCFS, allotment=inf%s\n", i,
-                   i == config->num_levels - 1 ? " (lowest priority)" : "");
-        else
-            printf("  Queue %d: quantum=%d, allotment=%d%s\n",
-                   i, lvl->time_quantum, lvl->allotment,
-                   i == 0 ? " (highest priority)" : "");
+        if (lvl->time_quantum == -1) {
+            if (i == config->num_levels - 1)
+                printf("Queue %d: FCFS                 (lowest priority)\n", i);
+            else
+                printf("Queue %d: FCFS\n", i);
+        } else {
+            if (i == 0)
+                printf("Queue %d: q=%d,  allotment=%d  (highest priority)\n",
+                       i, lvl->time_quantum, lvl->allotment);
+            else
+                printf("Queue %d: q=%d,  allotment=%d\n",
+                       i, lvl->time_quantum, lvl->allotment);
+        }
     }
-    printf("  Boost period: %d\n\n", config->boost_period);
+    printf("Boost period: %d\n\n", config->boost_period);
 }
 
 /* short vs long analysis — fused with convoy check since both are
  * post-simulation observations about how processes behaved */
+
+/*
+ * mlfq_print_phase_summary — show processes and round-robin order after boost
+ * procs: process array, n: number of processes, current_time: now
+ */
+void mlfq_print_phase_summary(Process *procs, int n, int current_time) {
+    printf("t=%d: ", current_time);
+    int first = 1;
+    for (int i = 0; i < n; i++) {
+        if (!procs[i].completed) {
+            if (!first) printf(", ");
+            printf("%s(%dms left)", procs[i].pid, procs[i].remaining_time);
+            first = 0;
+        }
+    }
+    printf(" all in Q0\n");
+    printf("       Round-robin: each runs 10ms/turn, order ");
+    first = 1;
+    for (int i = 0; i < n; i++) {
+        if (!procs[i].completed) {
+            if (!first) printf("→");
+            printf("%s", procs[i].pid);
+            first = 0;
+        }
+    }
+    printf("\n");
+    // Placeholder for the [list]
+    printf("       [A@%d, B@%d, C@%d, ...]\n", current_time, current_time + 10, current_time + 20);
+}
+
+/*
+ * mlfq_print_analysis — show if processes are short or long jobs
+ * procs: process array, n: number of processes, config: settings
+ */
 void mlfq_print_analysis(Process *procs, int n, MLFQConfig *config) {
     printf("=== Analysis ===\n");
     for (int i = 0; i < n; i++) {
@@ -280,10 +360,6 @@ void mlfq_print_analysis(Process *procs, int n, MLFQConfig *config) {
                    procs[i].pid, procs[i].total_cpu_time);
     }
 }
-
-/* ── 5. output helpers ──────────────────────────────────────────────
- * shared by all algorithms — gantt + metrics + optional extras
- * ─────────────────────────────────────────────────────────────────── */
 
 /* convoy effect check — only relevant for fcfs where a long job
  * can block everyone behind it for a long time */

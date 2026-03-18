@@ -6,28 +6,39 @@
 #include "scheduler.h"
 #include "metrics.h"
 #include "gantt.h"
-#include "utils.c"
 
 /*
  * mlfq.c — multi-level feedback queue scheduler
  *
- * big rule: never touch burst_time for scheduling decisions.
- * we only use remaining_time to know when a process is done.
- * all queue decisions come from time_in_queue vs allotment.
- *
- * all the messy helpers live in utils.c — this file is just
- * the simulation loop itself.
-/* ─────────────────────────────────────────
- * schedule_mlfq — the simulation loop
- * ───────────────────────────────────────── */
-int schedule_mlfq(SchedulerState *state, MLFQConfig *config) {
-    printf("Running MLFQ Scheduler...\n\n");
+ * all functions are placed in utils.c and are broken down into small sections
+ * 
+ * general flow:
+ * 1. reset process states and sort by arrival time
+ * 2. create mlfq queues and run simulation loop
+ * 3. in each tick: add arrivals, priority boost check first ueue, run highest priority process
+ * 4. after slice: check if process done, check if there is allotment left (if yes, then requeue, if no, then demote)
+ * 5. print tracing, analysis, and gantt chart
+ */
 
+
+/*
+ * schedule_mlfq — main simulation function for mlfq algorithm
+ * sets up config, processes, runs the loop, prints output
+ */
+int schedule_mlfq(SchedulerState *state, MLFQConfig *config) {
     int n          = state->num_processes;
     Process *procs = state->processes;
 
     /* show what config we're using */
     mlfq_print_config(config);
+
+    printf("=== Execution Trace ===\n\n");
+
+    int phase = 1;
+    if (config->boost_period > 0) {
+        printf("--- Phase %d: t=0 to t=%d (first boost period) ---\n\n",
+               phase, config->boost_period);
+    }
 
     /* reset all process fields before we start */
     for (int i = 0; i < n; i++) {
@@ -40,7 +51,7 @@ int schedule_mlfq(SchedulerState *state, MLFQConfig *config) {
         procs[i].start_time     = -1;
     }
 
-    /* sort by arrival time so we can scan arrivals linearly */
+    /* sort by arrival time so we can scan arrivals as they come*/
     for (int i = 1; i < n; i++) {
         Process tmp = procs[i];
         int j = i - 1;
@@ -59,20 +70,23 @@ int schedule_mlfq(SchedulerState *state, MLFQConfig *config) {
     int completed      = 0;   /* how many processes finished       */
     int next_to_arrive = 0;   /* index into sorted procs[]         */
 
-    printf("=== Execution Trace ===\n");
-
     while (completed < n) {
-
-        /* add any processes that arrived by now — always goes to Q0 */
+        /* add any processes that arrived by now (automatically sa Q0) */
         while (next_to_arrive < n &&
                procs[next_to_arrive].arrival_time <= t) {
-            mlfq_enqueue_process(mlfq, procs, next_to_arrive, 0, t);
+            mlfq_enqueue_process(mlfq, procs, next_to_arrive, 0, t, -1, NULL);
             next_to_arrive++;
         }
 
         /* boost all processes to Q0 if enough time has passed */
-        if (mlfq->boost_period > 0)
-            mlfq_boost(mlfq, procs, t);
+        if (mlfq->boost_period > 0) {
+            if (mlfq_boost(mlfq, procs, t)) {
+                phase++;
+                printf("\n--- Phase %d: t=%d to t=%d (next boost period) ---\n\n",
+                       phase, t, t + mlfq->boost_period);
+                mlfq_print_phase_summary(procs, n, t);
+            }
+        }
 
         /* find the highest priority queue that has something in it */
         int qi = mlfq_highest_nonempty(mlfq);
@@ -93,12 +107,6 @@ int schedule_mlfq(SchedulerState *state, MLFQConfig *config) {
         /* safety — skip if already done (can happen after a boost) */
         if (p->completed) continue;
 
-        /* note when this process first touched the cpu (for RT) */
-        if (!p->started) {
-            p->start_time = t;
-            p->started    = 1;
-        }
-
         /* how long does this process run this turn?
          * quantum=-1 means fcfs — run straight to completion */
         int quantum = config->levels[qi].time_quantum;
@@ -108,6 +116,14 @@ int schedule_mlfq(SchedulerState *state, MLFQConfig *config) {
                          ? p->remaining_time : quantum);
 
         int slice_start = t;
+        printf("t=%-3d:   Process %s runs (Q%d)\n",
+               slice_start, p->pid, qi);
+
+        /* note when this process first touched the cpu (for RT) */
+        if (!p->started) {
+            p->start_time = slice_start;
+            p->started    = 1;
+        }
 
         /* run the slice tick by tick so mid-slice arrivals
          * can enter Q0 without waiting until the next turn */
@@ -120,7 +136,7 @@ int schedule_mlfq(SchedulerState *state, MLFQConfig *config) {
             /* catch any arrivals that sneak in during this slice */
             while (next_to_arrive < n &&
                    procs[next_to_arrive].arrival_time <= t) {
-                mlfq_enqueue_process(mlfq, procs, next_to_arrive, 0, t);
+                mlfq_enqueue_process(mlfq, procs, next_to_arrive, 0, t, slice_start, p->pid);
                 next_to_arrive++;
             }
         }
@@ -133,11 +149,24 @@ int schedule_mlfq(SchedulerState *state, MLFQConfig *config) {
             p->finish_time = t;
             p->completed   = 1;
             completed++;
-            printf("  [t=%d] Process %s completed (Q%d)\n",
-                   t, p->pid, p->priority);
+            int turnaround = p->finish_time - p->arrival_time;
+            printf("t=%-3d:   Process %s COMPLETES at t=%d\n",
+                   t, p->pid, t);
+            printf("       (turnaround = %d - %d = %dms)\n",
+                   t, p->arrival_time, turnaround);
         } else {
             /* still has work — demote if allotment burned, else re-enqueue */
+            int old_lvl = p->priority;
+            int used    = mlfq->time_in_queue[idx];
+
             mlfq_requeue_or_demote(mlfq, idx, procs, config);
+
+            printf("t=%-3d:   Process %s preempted (Q%d allotment used: %dms)\n",
+                   t, p->pid, old_lvl, used);
+            if (p->priority != old_lvl) {
+                printf("t=%-3d:   Process %s → Q%d (exhausted %dms Q%d allotment)\n",
+                       t, p->pid, p->priority, used, old_lvl);
+            }
         }
     }
 

@@ -75,12 +75,13 @@ int       iq_is_empty(IdxQueue *q);
 /* mlfq utils */
 MLFQ *mlfq_create(MLFQConfig *config, int n);
 void  mlfq_destroy(MLFQ *mlfq, int num_levels);
-void  mlfq_enqueue_process(MLFQ *mlfq, Process *procs, int idx, int level, int t);
+void  mlfq_enqueue_process(MLFQ *mlfq, Process *procs, int idx, int level, int t, int slice_start, const char *current_pid);
 int   mlfq_highest_nonempty(MLFQ *mlfq);
-void  mlfq_boost(MLFQ *mlfq, Process *procs, int current_time);
+int   mlfq_boost(MLFQ *mlfq, Process *procs, int current_time);
 void  mlfq_requeue_or_demote(MLFQ *mlfq, int idx, Process *procs, MLFQConfig *config);
 void  mlfq_print_config(MLFQConfig *config);
 void  mlfq_print_analysis(Process *procs, int n, MLFQConfig *config);
+void  mlfq_print_phase_summary(Process *procs, int n, int current_time);
 MLFQConfig *load_mlfq_config(const char *path);
 MLFQConfig *default_mlfq_config(void);
 void        free_mlfq_config(MLFQConfig *cfg);
