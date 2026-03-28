@@ -8,10 +8,15 @@ Members: Del Rosario, Nina and Lansoy, Sam
 
 **Multiple Scheduling Algorithms:**
 - FCFS: First-Come, First-Served (Non-preemptive).
+    - Runs processes in arrival order, never interrupting a running process until it finishes.
 - SJF: Shortest Job First (Non-preemptive).
+    - Picks the process with the shortest burst time next, without preemption.
 - STCF: Shortest Time-to-Completion First (Preemptive SJF).
-- RR: Round Robin with configurable time quanta.
+    - Always runs whichever process has the least remaining time, preempting the current process if a shorter one arrives.
+- RR: Round Robin with configurable time quantum.
+    - Cycles through processes in order, giving each a fixed time quantum before switching to the next.
 - MLFQ: Multi-Level Feedback Queue.
+    - Uses multiple priority queues with different time quantums, automatically demoting CPU-heavy processes and periodically boosting all processes to prevent starvation.
 - Visualization: Auto-scaling ASCII Gantt chart to visualize process execution and idle time.
 - Performance Metrics: Detailed calculation of:
    * Turnaround Time (TT): Time from arrival to completion.
@@ -36,12 +41,21 @@ Members: Del Rosario, Nina and Lansoy, Sam
 make
 ```
 **Usage:**
-- Use a text file with lines formatted as [PID] [Arrival_Time] [Burst_Time].
+
+Create a text file with lines formatted below:
+```
+// [PID] [Arrival_Time] [Burst_Time]
+A 0  240
+B 10 180
+C 20 150
+D 25  80
+E 30 130
+```
 
 **Example:**
-How to Run SJF with a workload file
+How to Run SJF with a text file
 ```
-./schedsim --algorithm=SJF --input=workload1.txt
+./schedsim --algorithm=SJF --input=text.txt
 ```
 
 ## Sample Output
@@ -61,3 +75,6 @@ D        |   25 |   80 |    320 |    295 |    215 |    215
 E        |   30 |  130 |    450 |    420 |    290 |    290
 ---------|------|------|--------|--------|--------|--------
 Average  |      |      |        |  461.0 |  305.0 |  305.0
+```
+## Limitations and Assumptions
+- Comparative analysis is not yet implemented.
