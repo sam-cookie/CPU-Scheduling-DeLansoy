@@ -3,7 +3,7 @@
 
 #include "process.h"
 
-//schdulers and compare identifiers
+//schedulers and compare identifiers
 typedef enum {
     ALGO_FCFS,
     ALGO_SJF,
@@ -13,34 +13,14 @@ typedef enum {
     ALGO_COMPARE   /* Run all algorithms and compare */
 } SchedulingAlgorithm;
 
-//round robin config
-typedef struct {
-    int quantum;    /* Time slice (default: 30) */
-} RRConfig;
-
 //mlfq-specific structs
-typedef struct {
-    int level;          /* Queue priority level (0 = highest)   */
-    int time_quantum;   /* Time slice for this queue (-1 = FCFS) */
-    int allotment;      /* Max time before demotion (-1 = infinite) */
-    Process *queue;     /* Array of processes in this queue      */
-    int size;           /* Current number of processes in queue  */
-} MLFQQueue;
-
-typedef struct {
-    MLFQQueue *queues;  /* Array of queues                       */
-    int num_queues;     /* Number of priority levels             */
-    int boost_period;   /* Period for priority boost (S)         */
-    int last_boost;     /* Last time a boost occurred            */
-} MLFQScheduler;
-
 typedef struct {
     int level;          /* Queue index (0 = highest priority)    */
     int time_quantum;   /* Time slice; -1 means FCFS             */
     int allotment;      /* Max CPU time before demotion          */
 } MLFQLevel;
 
-//main configuraiton of a MLFQ
+//main configuration of a MLFQ
 typedef struct {
     MLFQLevel *levels;  /* Array of level configurations         */
     int num_levels;     /* Number of queues                      */
@@ -63,22 +43,22 @@ typedef struct {
     int        boost_period;
     int        last_boost;
     int       *time_in_queue;
-} MLFQ;
+} MLFQState;
 
 /* index queue helpers */
 IdxQueue *iq_create(int capacity);
 void      iq_free(IdxQueue *q);
 void      iq_enqueue(IdxQueue *q, int idx);
-int       iq_dequeue(IdxQueue *q);
+int       iq_dequeue(IdxQueue *q, int *out_idx);  /* returns 1 on success, 0 if empty */
 int       iq_is_empty(IdxQueue *q);
 
 /* mlfq utils */
-MLFQ *mlfq_create(MLFQConfig *config, int n);
-void  mlfq_destroy(MLFQ *mlfq, int num_levels);
-void  mlfq_enqueue_process(MLFQ *mlfq, Process *procs, int idx, int level, int t, int slice_start, const char *current_pid);
-int   mlfq_highest_nonempty(MLFQ *mlfq);
-int   mlfq_boost(MLFQ *mlfq, Process *procs, int current_time);
-void  mlfq_requeue_or_demote(MLFQ *mlfq, int idx, Process *procs, MLFQConfig *config);
+MLFQState *mlfq_create(MLFQConfig *config, int n);
+void  mlfq_destroy(MLFQState *mlfq, int num_levels);
+void  mlfq_enqueue_process(MLFQState *mlfq, Process *procs, int idx, int level, int t, int slice_start, const char *current_pid);
+int   mlfq_highest_nonempty(MLFQState *mlfq);
+int   mlfq_boost(MLFQState *mlfq, Process *procs, int current_time);
+void  mlfq_requeue_or_demote(MLFQState *mlfq, int idx, Process *procs, MLFQConfig *config);
 void  mlfq_print_config(MLFQConfig *config);
 void  mlfq_print_analysis(Process *procs, int n, MLFQConfig *config);
 void  mlfq_print_phase_summary(Process *procs, int n, int current_time);

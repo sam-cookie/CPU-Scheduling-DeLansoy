@@ -1,10 +1,15 @@
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include "scheduler.h"
 #include "gantt.h"
 
 /*
  * RR — Round Robin (preemptive, fixed time quantum)
+ *./schedsim --algorithm=RR --quantum=5 --processes="A:0:100,B:10:50"
+ *./schedsim --algorithm=RR --quantum=20 --processes="A:0:100,B:10:50"
+ *./schedsim --algorithm=RR --quantum=50 --processes="A:0:100,B:10:50"
+ *./schedsim --algorithm=RR --quantum=50 --input=workload1.txt"
  *
  * Rules:
  *   1. Processes are served in FIFO order from the ready queue.
@@ -17,8 +22,27 @@
  *   5. If the CPU is idle, advance time to the next arrival.
  */
 int schedule_rr(SchedulerState *state, int quantum) {
-    int      n     = state->num_processes;
-    Process *procs = state->processes;
+    /* validate quantum */
+    if (quantum <= 0) {
+        fprintf(stderr, "Error: RR quantum must be positive, got %d\n", quantum);
+        return -1;
+    }
+
+    int n = state->num_processes;
+
+    // work on local copy to avoid side effects
+    Process *procs = malloc((size_t)n * sizeof(Process));
+    if (!procs) return -1;
+    memcpy(procs, state->processes, (size_t)n * sizeof(Process));
+
+    // initialize/reset process state
+    for (int i = 0; i < n; i++) {
+        procs[i].remaining_time = procs[i].burst_time;
+        procs[i].completed      = 0;
+        procs[i].started        = 0;
+        procs[i].start_time     = -1;
+        procs[i].waiting_time   = 0;
+    }
 
     // sort processes by arrival time
     for (int i = 1; i < n; i++) {
@@ -90,5 +114,19 @@ int schedule_rr(SchedulerState *state, int quantum) {
     #undef ENQUEUE_ARRIVALS
 
     free_ready_queue(rq);
+
+    // copy results back to state->processes (matching by PID)
+    for (int i = 0; i < n; i++)
+        for (int j = 0; j < n; j++)
+            if (strcmp(state->processes[j].pid, procs[i].pid) == 0) {
+                state->processes[j].start_time  = procs[i].start_time;
+                state->processes[j].finish_time  = procs[i].finish_time;
+                state->processes[j].waiting_time = procs[i].waiting_time;
+                state->processes[j].started      = procs[i].started;
+                state->processes[j].completed    = procs[i].completed;
+                break;
+            }
+
+    free(procs);
     return 0;
 }

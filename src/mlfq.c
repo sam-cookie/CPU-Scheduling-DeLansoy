@@ -10,6 +10,8 @@
 /*
  * mlfq.c — multi-level feedback queue scheduler
  *
+ * ./schedsim --algorithm=MLFQ --input=tests/workload1.txt
+ * ./schedsim --algorithm=MLFQ --processes="A:0:240,B:10:180,C:20:150"
  * all functions are placed in utils.c and are broken down into small sections
  * 
  * general flow:
@@ -26,8 +28,12 @@
  * sets up config, processes, runs the loop, prints output
  */
 int schedule_mlfq(SchedulerState *state, MLFQConfig *config) {
-    int n          = state->num_processes;
-    Process *procs = state->processes;
+    int n = state->num_processes;
+
+    // work on local copy to avoid side effects
+    Process *procs = malloc((size_t)n * sizeof(Process));
+    if (!procs) return -1;
+    memcpy(procs, state->processes, (size_t)n * sizeof(Process));
 
     /* show what config we're using */
     mlfq_print_config(config);
@@ -49,6 +55,7 @@ int schedule_mlfq(SchedulerState *state, MLFQConfig *config) {
         procs[i].started        = 0;
         procs[i].completed      = 0;
         procs[i].start_time     = -1;
+        procs[i].waiting_time   = 0;
     }
 
     /* sort by arrival time so we can scan arrivals as they come*/
@@ -62,8 +69,8 @@ int schedule_mlfq(SchedulerState *state, MLFQConfig *config) {
         procs[j+1] = tmp;
     }
 
-    /* spin up the mlfq — queues + allotment counters */
-    MLFQ *mlfq = mlfq_create(config, n);
+    /* create the mlfq — queues + allotment counters */
+    MLFQState *mlfq = mlfq_create(config, n);
     if (!mlfq) return -1;
 
     int t              = 0;   /* simulation clock                  */
@@ -101,7 +108,11 @@ int schedule_mlfq(SchedulerState *state, MLFQConfig *config) {
         }
 
         /* grab the next process from that queue by index */
-        int idx    = iq_dequeue(mlfq->queues[qi]);
+        int idx;
+        if (!iq_dequeue(mlfq->queues[qi], &idx)) {
+            /* This shouldn't happen since we checked highest_nonempty */
+            continue;
+        }
         Process *p = &procs[idx];
 
         /* safety — skip if already done (can happen after a boost) */
@@ -177,5 +188,21 @@ int schedule_mlfq(SchedulerState *state, MLFQConfig *config) {
     printf("\n");
     mlfq_print_analysis(procs, n, config);
 
+    // copy results back to state->processes (matching by PID)
+    for (int i = 0; i < n; i++)
+        for (int j = 0; j < n; j++)
+            if (strcmp(state->processes[j].pid, procs[i].pid) == 0) {
+                state->processes[j].start_time  = procs[i].start_time;
+                state->processes[j].finish_time  = procs[i].finish_time;
+                state->processes[j].waiting_time = procs[i].waiting_time;
+                state->processes[j].started      = procs[i].started;
+                state->processes[j].completed    = procs[i].completed;
+                state->processes[j].priority     = procs[i].priority;
+                state->processes[j].time_in_queue = procs[i].time_in_queue;
+                state->processes[j].total_cpu_time = procs[i].total_cpu_time;
+                break;
+            }
+
+    free(procs);
     return 0;
 }

@@ -40,6 +40,10 @@ int main(int argc, char *argv[]) {
             proc_deets = argv[i] + 12;
         } else if (strncmp(argv[i], "--quantum=", 10) == 0) {
             rr_quantum = atoi(argv[i] + 10);
+            if (rr_quantum <= 0) {
+                fprintf(stderr, "Error: RR quantum must be positive, got %d\n", rr_quantum);
+                return 1;
+            }
         } else if (strncmp(argv[i], "--mlfq-config=", 14) == 0) {
             mlfq_cfg = argv[i] + 14;
         } else if (strcmp(argv[i], "--compare") == 0) {

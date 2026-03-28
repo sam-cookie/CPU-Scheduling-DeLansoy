@@ -47,7 +47,7 @@ void enqueue(ReadyQueue *q, Process *p) {
             /* tail wrapped around — copy the wrapped part to the new space */
             int old_cap = q->capacity;
             for (int i = 0; i < q->tail; i++)
-                new_queue[old_cap + i] = new_queue[i];
+                new_queue[old_cap + i] = q->queue[i];  /* copy from old buffer */
             q->tail = old_cap + q->tail;
         }
         q->queue    = new_queue;
@@ -97,19 +97,24 @@ void iq_enqueue(IdxQueue *q, int idx) {
     /* grow if full */
     if (q->size >= q->capacity) {
         q->capacity *= 2;
-        q->indices   = realloc(q->indices, q->capacity * sizeof(int));
+        int *new_indices = realloc(q->indices, q->capacity * sizeof(int));
+        if (!new_indices) {
+            fprintf(stderr, "iq_enqueue: realloc failed\n");
+            return;  /* cannot grow, silently drop this enqueue */
+        }
+        q->indices = new_indices;
     }
     q->indices[q->size++] = idx;
 }
 
-int iq_dequeue(IdxQueue *q) {
-    if (q->size == 0) return -1;
-    int idx = q->indices[0];
+int iq_dequeue(IdxQueue *q, int *out_idx) {
+    if (q->size == 0) return 0;  /* empty */
+    *out_idx = q->indices[0];
     /* shift left — fine for small n */
     for (int i = 1; i < q->size; i++)
         q->indices[i-1] = q->indices[i];
     q->size--;
-    return idx;
+    return 1;  /* success */
 }
 
 int iq_is_empty(IdxQueue *q) {
@@ -121,8 +126,8 @@ int iq_is_empty(IdxQueue *q) {
  * config: queue settings, n: number of processes
  * returns: new mlfq struct or null on error
  */
-MLFQ *mlfq_create(MLFQConfig *config, int n) {
-    MLFQ *mlfq          = calloc(1, sizeof(MLFQ));
+MLFQState *mlfq_create(MLFQConfig *config, int n) {
+    MLFQState *mlfq          = calloc(1, sizeof(MLFQState));
     mlfq->num_queues    = config->num_levels;
     mlfq->boost_period  = config->boost_period;
     mlfq->last_boost    = 0;
@@ -137,7 +142,7 @@ MLFQ *mlfq_create(MLFQConfig *config, int n) {
  * mlfq_destroy — clean up mlfq memory
  * mlfq: the struct to free, num_levels: number of queues
  */
-void mlfq_destroy(MLFQ *mlfq, int num_levels) {
+void mlfq_destroy(MLFQState *mlfq, int num_levels) {
     for (int i = 0; i < num_levels; i++)
         iq_free(mlfq->queues[i]);
     free(mlfq->queues);
@@ -153,7 +158,7 @@ void mlfq_destroy(MLFQ *mlfq, int num_levels) {
  * slice_start: start of current slice (for mid-quantum check)
  * current_pid: pid of currently running process (for mid-quantum)
  */
-void mlfq_enqueue_process(MLFQ *mlfq, Process *procs,
+void mlfq_enqueue_process(MLFQState *mlfq, Process *procs,
                            int idx, int level, int t, int slice_start, const char *current_pid) {
     if (current_pid && t > slice_start) {
         printf("t=%-3d:   Process %s arrives mid-quantum; %s continues\n",
@@ -172,7 +177,7 @@ void mlfq_enqueue_process(MLFQ *mlfq, Process *procs,
  * mlfq: the scheduler
  * returns: queue index (0 highest) or -1 if all empty
  */
-int mlfq_highest_nonempty(MLFQ *mlfq) {
+int mlfq_highest_nonempty(MLFQState *mlfq) {
     for (int i = 0; i < mlfq->num_queues; i++)
         if (!iq_is_empty(mlfq->queues[i]))
             return i;
@@ -184,16 +189,18 @@ int mlfq_highest_nonempty(MLFQ *mlfq) {
  * mlfq: the scheduler, procs: process array, current_time: now
  * returns: 1 if boosted, 0 otherwise
  */
-int mlfq_boost(MLFQ *mlfq, Process *procs, int current_time) {
+int mlfq_boost(MLFQState *mlfq, Process *procs, int current_time) {
     if (current_time - mlfq->last_boost < mlfq->boost_period) return 0;
     printf("t=%-3d: Priority boost: all processes → Q0 (allotments reset)\n",
            current_time);
     for (int i = 1; i < mlfq->num_queues; i++) {
         while (!iq_is_empty(mlfq->queues[i])) {
-            int idx              = iq_dequeue(mlfq->queues[i]);
-            procs[idx].priority  = 0;
-            mlfq->time_in_queue[idx] = 0;
-            iq_enqueue(mlfq->queues[0], idx);
+            int idx;
+            if (iq_dequeue(mlfq->queues[i], &idx)) {
+                procs[idx].priority  = 0;
+                mlfq->time_in_queue[idx] = 0;
+                iq_enqueue(mlfq->queues[0], idx);
+            }
         }
     }
     mlfq->last_boost = current_time;
@@ -204,7 +211,7 @@ int mlfq_boost(MLFQ *mlfq, Process *procs, int current_time) {
  * mlfq_requeue_or_demote — after slice, demote if allotment used, else requeue
  * mlfq: the scheduler, idx: process index, procs: process array, config: settings
  */
-void mlfq_requeue_or_demote(MLFQ *mlfq, int idx,
+void mlfq_requeue_or_demote(MLFQState *mlfq, int idx,
                               Process *procs, MLFQConfig *config) {
     int lvl       = procs[idx].priority;
     int allotment = config->levels[lvl].allotment;
@@ -246,6 +253,20 @@ MLFQConfig *load_mlfq_config(const char *path) {
         int qid, quantum, allotment;
         if (sscanf(line, "Q%d %d %d", &qid, &quantum, &allotment) == 3) {
             if (qid < 16) {
+                /* validate quantum: must be positive or -1 (FCFS mode) */
+                if (quantum != -1 && quantum <= 0) {
+                    fprintf(stderr, "Error: MLFQ config Q%d has invalid quantum %d (must be > 0 or -1 for FCFS)\n", qid, quantum);
+                    fclose(f);
+                    free_mlfq_config(cfg);
+                    return NULL;
+                }
+                /* validate allotment: must be positive or -1 (infinite) */
+                if (allotment != -1 && allotment <= 0) {
+                    fprintf(stderr, "Error: MLFQ config Q%d has invalid allotment %d (must be > 0 or -1 for infinite)\n", qid, allotment);
+                    fclose(f);
+                    free_mlfq_config(cfg);
+                    return NULL;
+                }
                 cfg->levels[qid].level        = qid;
                 cfg->levels[qid].time_quantum  = quantum;
                 cfg->levels[qid].allotment     = allotment;
@@ -254,8 +275,16 @@ MLFQConfig *load_mlfq_config(const char *path) {
             }
         } else {
             int period;
-            if (sscanf(line, "BOOST_PERIOD %d", &period) == 1)
+            if (sscanf(line, "BOOST_PERIOD %d", &period) == 1) {
+                /* validate boost_period: must be positive */
+                if (period <= 0) {
+                    fprintf(stderr, "Error: BOOST_PERIOD must be positive, got %d\n", period);
+                    fclose(f);
+                    free_mlfq_config(cfg);
+                    return NULL;
+                }
                 cfg->boost_period = period;
+            }
         }
     }
     fclose(f);

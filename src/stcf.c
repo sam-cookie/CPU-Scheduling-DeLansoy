@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include "scheduler.h"
 #include "gantt.h"
@@ -15,8 +16,12 @@
  *   4. If no process is ready, advance the clock (CPU idle).
  */
 int schedule_stcf(SchedulerState *state) {
-    int      n     = state->num_processes;
-    Process *procs = state->processes;
+    int n = state->num_processes;
+
+    // work on local copy to avoid side effects
+    Process *procs = malloc((size_t)n * sizeof(Process));
+    if (!procs) return -1;
+    memcpy(procs, state->processes, (size_t)n * sizeof(Process));
 
     /* initialise remaining_time for every process */
     for (int i = 0; i < n; i++) {
@@ -24,6 +29,7 @@ int schedule_stcf(SchedulerState *state) {
         procs[i].completed      = 0;
         procs[i].started        = 0;
         procs[i].start_time     = -1;
+        procs[i].waiting_time   = 0;
     }
 
     int  clock      = 0;
@@ -80,5 +86,18 @@ int schedule_stcf(SchedulerState *state) {
         }
     }
 
+    // copy results back to state->processes (matching by PID)
+    for (int i = 0; i < n; i++)
+        for (int j = 0; j < n; j++)
+            if (strcmp(state->processes[j].pid, procs[i].pid) == 0) {
+                state->processes[j].start_time  = procs[i].start_time;
+                state->processes[j].finish_time  = procs[i].finish_time;
+                state->processes[j].waiting_time = procs[i].waiting_time;
+                state->processes[j].started      = procs[i].started;
+                state->processes[j].completed    = procs[i].completed;
+                break;
+            }
+
+    free(procs);
     return 0;
 }

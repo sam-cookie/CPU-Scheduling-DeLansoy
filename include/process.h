@@ -28,7 +28,7 @@ typedef struct {
 } Process;
 
 
-//gannt chart entry 
+//gantt chart entry
 typedef struct {
     char pid[MAX_PID_LEN];  /* Which process ran (or "IDLE")  */
     int start_time;         /* Start of this slice            */
