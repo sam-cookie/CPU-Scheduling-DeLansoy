@@ -1,9 +1,9 @@
 #ifndef PROCESS_H
 #define PROCESS_H
 
-#define MAX_PID_LEN 16
-#define MAX_PROCESSES 256
-#define MAX_GANTT_LEN 100000
+#define MAX_PID_LEN    16
+#define MAX_PROCESSES  256
+#define MAX_GANTT_LEN  4096
 
 //main structs
 typedef struct {
@@ -38,13 +38,14 @@ typedef struct {
 
 //simulation
 typedef struct {
-    Process *processes;         /* Array of all processes           */
-    int num_processes;          /* Number of processes              */
-    int current_time;           /* Current simulation clock         */
-    int context_switches;       /* Total context switches           */
+    Process    *processes;       /* Array of all processes           */
+    int         num_processes;   /* Number of processes              */
+    int         current_time;    /* Current simulation clock         */
+    int         context_switches;/* Total context switches           */
 
-    GanttEntry gantt[MAX_GANTT_LEN]; /* Gantt chart log             */
-    int gantt_size;                  /* Number of entries logged    */
+    GanttEntry *gantt;           /* Heap-allocated gantt chart log   */
+    int         gantt_size;      /* Number of entries logged         */
+    int         gantt_capacity;  /* Allocated capacity               */
 } SchedulerState;
 
 

@@ -1,10 +1,19 @@
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include "gantt.h"
 
 void gantt_record(SchedulerState *state, const char *pid,
                   int start_time, int end_time) {
     if (end_time <= start_time) return;
+
+    // lazy-init: allocate gantt array on first use
+    if (state->gantt == NULL) {
+        state->gantt = malloc(MAX_GANTT_LEN * sizeof(GanttEntry));
+        if (!state->gantt) return;
+        state->gantt_capacity = MAX_GANTT_LEN;
+        state->gantt_size     = 0;
+    }
 
     if (state->gantt_size > 0) {
         GanttEntry *last = &state->gantt[state->gantt_size - 1];
@@ -15,7 +24,11 @@ void gantt_record(SchedulerState *state, const char *pid,
         }
     }
 
-    if (state->gantt_size >= MAX_GANTT_LEN) return;
+    if (state->gantt_size >= state->gantt_capacity) {
+        fprintf(stderr, "Warning: gantt chart full (%d entries), truncating.\n",
+                state->gantt_capacity);
+        return;
+    }
 
     GanttEntry *e = &state->gantt[state->gantt_size++];
     strncpy(e->pid, pid, MAX_PID_LEN - 1);
@@ -25,7 +38,7 @@ void gantt_record(SchedulerState *state, const char *pid,
 }
 
 void gantt_print(const SchedulerState *state) {
-    if (state->gantt_size == 0) {
+    if (state->gantt == NULL || state->gantt_size == 0) {
         printf("(empty Gantt chart)\n");
         return;
     }
@@ -36,7 +49,6 @@ void gantt_print(const SchedulerState *state) {
         return;
     }
 
-    // Find smallest scale where total screen width fits in MAX_COLS.
     int scale = 1;
     for (; scale <= total; scale++) {
         int screen_width = 0;
@@ -44,13 +56,13 @@ void gantt_print(const SchedulerState *state) {
             int raw   = state->gantt[i].end_time - state->gantt[i].start_time;
             int width = raw / scale;
             if (width < MIN_BLOCK_WIDTH) width = MIN_BLOCK_WIDTH;
-            screen_width += width + 2;   // '[' + content + ']'
+            screen_width += width + 2;
         }
         if (screen_width <= MAX_COLS) break;
     }
 
-    // precompute widths at chosen scale
-    int widths[MAX_GANTT_LEN];
+    int *widths = malloc(state->gantt_size * sizeof(int));
+    if (!widths) return;
     for (int i = 0; i < state->gantt_size; i++) {
         int raw   = state->gantt[i].end_time - state->gantt[i].start_time;
         widths[i] = raw / scale;
@@ -62,7 +74,6 @@ void gantt_print(const SchedulerState *state) {
     int row_start = 0;
     while (row_start < state->gantt_size) {
 
-        // greedily pack blocks into this row
         int row_width = 0;
         int row_end   = row_start;
         while (row_end < state->gantt_size) {
@@ -93,7 +104,7 @@ void gantt_print(const SchedulerState *state) {
         }
         printf("\n");
 
-        // time axis — every block is now wide enough to show its label
+        // time axis line
         int cursor   = 0;
         int last_end = -1;
         int col      = 0;
@@ -112,7 +123,6 @@ void gantt_print(const SchedulerState *state) {
             col += widths[i] + 2;
         }
 
-        // end-time of last block in this row
         {
             char label[16];
             snprintf(label, sizeof(label), "%d",
@@ -130,4 +140,6 @@ void gantt_print(const SchedulerState *state) {
 
         row_start = row_end;
     }
+
+    free(widths);
 }
