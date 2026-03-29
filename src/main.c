@@ -24,7 +24,7 @@ int main(int argc, char *argv[]) {
     }
 
     SchedulingAlgorithm  algo      = ALGO_FCFS;
-    const char          *algo_name = "FCFS";  // for display purposes only, not used in logic
+    const char          *algo_name = "FCFS";
     const char          *input_file = NULL;
     const char          *proc_deets = NULL;
     const char          *mlfq_cfg   = NULL;
@@ -32,7 +32,7 @@ int main(int argc, char *argv[]) {
 
     for (int i = 1; i < argc; i++) {
         if (strncmp(argv[i], "--algorithm=", 12) == 0) {
-            algo_name = argv[i] + 12;              // raw string from arg
+            algo_name = argv[i] + 12;
             algo      = parse_algorithm(algo_name);
         } else if (strncmp(argv[i], "--input=", 8) == 0) {
             input_file = argv[i] + 8;
@@ -93,25 +93,33 @@ int main(int argc, char *argv[]) {
         result = schedule_compare(processes, num_processes,
                                   rr_quantum, mlfq_config);
     } else {
-        SchedulerState state;
-        memset(&state, 0, sizeof(state));
-        state.processes     = processes;
-        state.num_processes = num_processes;
+        // allocate SchedulerState on the heap instead of the stack.
+        SchedulerState *state = calloc(1, sizeof(SchedulerState));
+        if (!state) {
+            fprintf(stderr, "Error: failed to allocate scheduler state.\n");
+            free(processes);
+            free_mlfq_config(mlfq_config);
+            return 1;
+        }
+        state->processes     = processes;
+        state->num_processes = num_processes;
 
         switch (algo) {
-            case ALGO_FCFS:  result = schedule_fcfs(&state);              break;
-            case ALGO_SJF:   result = schedule_sjf(&state);               break;
-            case ALGO_STCF:  result = schedule_stcf(&state);              break;
-            case ALGO_RR:    result = schedule_rr(&state, rr_quantum);    break;
-            case ALGO_MLFQ:  result = schedule_mlfq(&state, mlfq_config); break;
+            case ALGO_FCFS:  result = schedule_fcfs(state);              break;
+            case ALGO_SJF:   result = schedule_sjf(state);               break;
+            case ALGO_STCF:  result = schedule_stcf(state);              break;
+            case ALGO_RR:    result = schedule_rr(state, rr_quantum);    break;
+            case ALGO_MLFQ:  result = schedule_mlfq(state, mlfq_config); break;
             default:
                 fprintf(stderr, "Unknown algorithm.\n");
                 result = 1;
         }
 
-       // output is here ! algo is pure simulation 
         if (result == 0)
-            print_results(&state, algo_name);
+            print_results(state, algo_name);
+
+        free(state->gantt);   // free the heap-allocated gantt array
+        free(state);
     }
 
     free(processes);
