@@ -42,8 +42,6 @@ void calculate_metrics(Process *processes, int n, Metrics *out) {
         valid++;
     }
 
-    // FIX: divide by valid count, not n, so skipped processes don't
-    // silently reduce the averages
     if (valid > 0) {
         out->avg_turnaround = sum_tt / valid;
         out->avg_waiting    = sum_wt / valid;
