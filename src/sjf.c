@@ -61,6 +61,12 @@ int schedule_sjf(SchedulerState *state) {
         chosen->remaining_time = 0;
         chosen->finish_time    = clock;
         chosen->completed      = 1;
+
+        // compute waiting_time in the local copy before copying back
+        // so we no zero value into state->processes
+        chosen->waiting_time =
+            (chosen->finish_time - chosen->arrival_time) - chosen->burst_time;
+
         completed++;
 
         gantt_record(state, chosen->pid, run_start, clock);
@@ -72,7 +78,7 @@ int schedule_sjf(SchedulerState *state) {
             if (strcmp(state->processes[j].pid, procs[i].pid) == 0) {
                 state->processes[j].start_time  = procs[i].start_time;
                 state->processes[j].finish_time  = procs[i].finish_time;
-                state->processes[j].waiting_time = procs[i].waiting_time;
+                state->processes[j].waiting_time = procs[i].waiting_time; 
                 state->processes[j].started      = procs[i].started;
                 state->processes[j].completed    = procs[i].completed;
                 break;
