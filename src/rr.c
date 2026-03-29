@@ -65,7 +65,10 @@ int schedule_rr(SchedulerState *state, int quantum) {
     #define ENQUEUE_ARRIVALS(time) \
         while (next_to_arrive < n && \
                procs[next_to_arrive].arrival_time <= (time)) { \
-            enqueue(rq, &procs[next_to_arrive]); \
+            if (!enqueue(rq, &procs[next_to_arrive])) { \
+                fprintf(stderr, "Error: failed to enqueue arriving process %s\n", \
+                        procs[next_to_arrive].pid); \
+            } \
             next_to_arrive++; \
         }
 
@@ -105,7 +108,10 @@ int schedule_rr(SchedulerState *state, int quantum) {
             current->completed   = 1;
             completed++;
         } else {
-            enqueue(rq, current);
+            if (!enqueue(rq, current)) {
+                fprintf(stderr, "Error: failed to re-enqueue process %s\n", 
+                        current->pid);
+            }
             ENQUEUE_ARRIVALS(t);
             state->context_switches++;
         }

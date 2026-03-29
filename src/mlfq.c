@@ -12,7 +12,8 @@
  *
  * ./schedsim --algorithm=MLFQ --input=tests/workload1.txt
  * ./schedsim --algorithm=MLFQ --processes="A:0:240,B:10:180,C:20:150"
- * all functions are placed in utils.c and are broken down into small sections
+ * all functions are placed in modular _utils files (mlfq_state_utils.c, mlfq_config_utils.c, etc.)
+ * and are broken down into small sections
  * 
  * general flow:
  * 1. reset process states and sort by arrival time

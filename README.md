@@ -31,7 +31,7 @@ Members: Del Rosario, Nina and Lansoy, Sam
 |-- mlfq.c: Multi-Level Feedback Queue implementation.
 |-- metrics.c / metrics.h: Logic for calculating TT, WT, RT, and averages.
 |-- gantt.c / gantt.h: ASCII Gantt chart generation logic.
-|-- utils.c: Shared utilities (Ready Queue management, comparison logic).
+|-- *_utils.c / *_utils.h: Modular utilities (ready queue, index queue, MLFQ state/config, output, comparison).
 ```
 
 ## Compilation and Usage

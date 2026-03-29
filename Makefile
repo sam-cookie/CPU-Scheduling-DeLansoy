@@ -2,16 +2,21 @@ CC      = gcc
 CFLAGS  = -Wall -Wextra -Wpedantic -g -Iinclude
 TARGET  = schedsim
 
-SRC = src/main.c     \
-      src/process.c  \
-      src/fcfs.c     \
-      src/sjf.c      \
-      src/stcf.c     \
-      src/rr.c       \
-      src/mlfq.c     \
-      src/metrics.c  \
-      src/gantt.c    \
-      src/utils.c
+SRC = src/main.c                \
+      src/process.c             \
+      src/fcfs.c                \
+      src/sjf.c                 \
+      src/stcf.c                \
+      src/rr.c                  \
+      src/mlfq.c                \
+      src/metrics.c             \
+      src/gantt.c               \
+      src/ready_queue_utils.c   \
+      src/index_queue_utils.c   \
+      src/mlfq_state_utils.c    \
+      src/mlfq_config_utils.c   \
+      src/output_utils.c        \
+      src/compare_utils.c
 
 OBJ = $(SRC:.c=.o)
 
