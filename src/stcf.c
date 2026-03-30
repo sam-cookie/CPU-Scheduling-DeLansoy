@@ -23,7 +23,6 @@ int schedule_stcf(SchedulerState *state) {
     if (!procs) return -1;
     memcpy(procs, state->processes, (size_t)n * sizeof(Process));
 
-    /* initialise remaining_time for every process */
     for (int i = 0; i < n; i++) {
         procs[i].remaining_time = procs[i].burst_time;
         procs[i].completed      = 0;
@@ -35,11 +34,10 @@ int schedule_stcf(SchedulerState *state) {
     int  clock      = 0;
     int  completed  = 0;
     int  last_start = 0;
-    char current_pid[MAX_PID_LEN] = "";   /* pid of whoever is running */
+    char current_pid[MAX_PID_LEN] = "";
 
     while (completed < n) {
 
-        // pick process with shortest remaining_time
         Process *chosen = NULL;
         for (int i = 0; i < n; i++) {
             if (procs[i].completed || procs[i].arrival_time > clock) continue;
@@ -48,20 +46,16 @@ int schedule_stcf(SchedulerState *state) {
                 chosen = &procs[i];
         }
 
-        // CPU idle — no process ready yet
         if (chosen == NULL) {
             clock++;
             continue;
         }
 
-        // context switch detection
         if (strcmp(current_pid, chosen->pid) != 0) {
-            /* flush the previous process's slice to the Gantt chart */
             if (strlen(current_pid) > 0) {
                 gantt_record(state, current_pid, last_start, clock);
                 state->context_switches++;
             }
-            /* record first execution for response time */
             if (!chosen->started) {
                 chosen->start_time = clock;
                 chosen->started    = 1;
@@ -70,17 +64,19 @@ int schedule_stcf(SchedulerState *state) {
             last_start = clock;
         }
 
-        // run for 1 tick
         chosen->remaining_time--;
         clock++;
 
-        // process finished
         if (chosen->remaining_time == 0) {
             chosen->finish_time = clock;
             chosen->completed   = 1;
-            completed++;
 
-            /* flush final slice */
+            // compute waiting_time before copying back
+            chosen->waiting_time =
+                (chosen->finish_time - chosen->arrival_time) - chosen->burst_time;
+            if (chosen->waiting_time < 0) chosen->waiting_time = 0;
+
+            completed++;
             gantt_record(state, chosen->pid, last_start, clock);
             current_pid[0] = '\0';
         }
@@ -90,11 +86,11 @@ int schedule_stcf(SchedulerState *state) {
     for (int i = 0; i < n; i++)
         for (int j = 0; j < n; j++)
             if (strcmp(state->processes[j].pid, procs[i].pid) == 0) {
-                state->processes[j].start_time  = procs[i].start_time;
-                state->processes[j].finish_time  = procs[i].finish_time;
-                state->processes[j].waiting_time = procs[i].waiting_time;
-                state->processes[j].started      = procs[i].started;
-                state->processes[j].completed    = procs[i].completed;
+                state->processes[j].start_time   = procs[i].start_time;
+                state->processes[j].finish_time   = procs[i].finish_time;
+                state->processes[j].waiting_time  = procs[i].waiting_time;
+                state->processes[j].started       = procs[i].started;
+                state->processes[j].completed     = procs[i].completed;
                 break;
             }
 
