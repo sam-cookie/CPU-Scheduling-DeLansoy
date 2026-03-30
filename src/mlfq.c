@@ -72,7 +72,7 @@ int schedule_mlfq(SchedulerState *state, MLFQConfig *config) {
 
     /* create the mlfq — queues + allotment counters */
     MLFQState *mlfq = mlfq_create(config, n);
-    if (!mlfq) return -1;
+    if (!mlfq) { free(procs); return -1; }
 
     int t              = 0;   /* simulation clock                  */
     int completed      = 0;   /* how many processes finished       */
@@ -160,6 +160,12 @@ int schedule_mlfq(SchedulerState *state, MLFQConfig *config) {
         if (p->remaining_time == 0) {
             p->finish_time = t;
             p->completed   = 1;
+
+            // compute waiting_time before copying back 
+            p->waiting_time =
+                (p->finish_time - p->arrival_time) - p->burst_time;
+            if (p->waiting_time < 0) p->waiting_time = 0;
+
             completed++;
             int turnaround = p->finish_time - p->arrival_time;
             printf("t=%-3d:   Process %s COMPLETES at t=%d\n",

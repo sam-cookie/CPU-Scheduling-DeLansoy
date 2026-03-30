@@ -6,10 +6,6 @@
 
 /*
  * RR — Round Robin (preemptive, fixed time quantum)
- *./schedsim --algorithm=RR --quantum=5 --processes="A:0:100,B:10:50"
- *./schedsim --algorithm=RR --quantum=20 --processes="A:0:100,B:10:50"
- *./schedsim --algorithm=RR --quantum=50 --processes="A:0:100,B:10:50"
- *./schedsim --algorithm=RR --quantum=50 --input=workload1.txt"
  *
  * Rules:
  *   1. Processes are served in FIFO order from the ready queue.
@@ -18,11 +14,9 @@
  *      the back of the ready queue (context switch).
  *   4. NEW ARRIVALS during a running quantum join the queue at the
  *      end — they do NOT preempt the currently running process.
- *      The queue runs in isolation during each quantum.
  *   5. If the CPU is idle, advance time to the next arrival.
  */
 int schedule_rr(SchedulerState *state, int quantum) {
-    /* validate quantum */
     if (quantum <= 0) {
         fprintf(stderr, "Error: RR quantum must be positive, got %d\n", quantum);
         return -1;
@@ -35,7 +29,6 @@ int schedule_rr(SchedulerState *state, int quantum) {
     if (!procs) return -1;
     memcpy(procs, state->processes, (size_t)n * sizeof(Process));
 
-    // initialize/reset process state
     for (int i = 0; i < n; i++) {
         procs[i].remaining_time = procs[i].burst_time;
         procs[i].completed      = 0;
@@ -44,7 +37,7 @@ int schedule_rr(SchedulerState *state, int quantum) {
         procs[i].waiting_time   = 0;
     }
 
-    // sort processes by arrival time
+    // sort by arrival time
     for (int i = 1; i < n; i++) {
         Process tmp = procs[i];
         int j = i - 1;
@@ -55,13 +48,11 @@ int schedule_rr(SchedulerState *state, int quantum) {
         procs[j + 1] = tmp;
     }
 
-    // ready queue
     ReadyQueue *rq     = create_ready_queue(n * 2);
     int completed      = 0;
     int t              = 0;
     int next_to_arrive = 0;
 
-    // enqueue all processes whose arrival_time <= `time`
     #define ENQUEUE_ARRIVALS(time) \
         while (next_to_arrive < n && \
                procs[next_to_arrive].arrival_time <= (time)) { \
@@ -72,12 +63,10 @@ int schedule_rr(SchedulerState *state, int quantum) {
             next_to_arrive++; \
         }
 
-    // main simulation loop
     while (completed < n) {
 
         ENQUEUE_ARRIVALS(t);
 
-        // CPU idle — jump to next arrival
         if (queue_is_empty(rq)) {
             if (next_to_arrive < n) {
                 t = procs[next_to_arrive].arrival_time;
@@ -106,13 +95,19 @@ int schedule_rr(SchedulerState *state, int quantum) {
         if (current->remaining_time == 0) {
             current->finish_time = t;
             current->completed   = 1;
+
+            // compute waiting time before copying back
+            current->waiting_time =
+                (current->finish_time - current->arrival_time) - current->burst_time;
+            if (current->waiting_time < 0) current->waiting_time = 0;
+
             completed++;
         } else {
+            ENQUEUE_ARRIVALS(t);
             if (!enqueue(rq, current)) {
-                fprintf(stderr, "Error: failed to re-enqueue process %s\n", 
+                fprintf(stderr, "Error: failed to re-enqueue process %s\n",
                         current->pid);
             }
-            ENQUEUE_ARRIVALS(t);
             state->context_switches++;
         }
     }
@@ -125,11 +120,11 @@ int schedule_rr(SchedulerState *state, int quantum) {
     for (int i = 0; i < n; i++)
         for (int j = 0; j < n; j++)
             if (strcmp(state->processes[j].pid, procs[i].pid) == 0) {
-                state->processes[j].start_time  = procs[i].start_time;
-                state->processes[j].finish_time  = procs[i].finish_time;
-                state->processes[j].waiting_time = procs[i].waiting_time;
-                state->processes[j].started      = procs[i].started;
-                state->processes[j].completed    = procs[i].completed;
+                state->processes[j].start_time   = procs[i].start_time;
+                state->processes[j].finish_time   = procs[i].finish_time;
+                state->processes[j].waiting_time  = procs[i].waiting_time;
+                state->processes[j].started       = procs[i].started;
+                state->processes[j].completed     = procs[i].completed;
                 break;
             }
 
